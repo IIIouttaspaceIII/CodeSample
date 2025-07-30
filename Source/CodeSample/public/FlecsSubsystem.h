@@ -19,6 +19,10 @@ struct FFlecsEntityHandle
 	flecs::entity FlecsEntityId;
 };
 
+struct SubsystemReference {
+	UFlecsSubsystem* subsystem;
+};
+
 struct Accumulator
 {
 	float accumulatedTime = 0.f;
@@ -119,6 +123,7 @@ public:
 	void SetWheelAngle(FFlecsEntityHandle handle, float amount);
 
 	void DrawDebugVector(const FVector2D& start, const FVector2D& end, const FColor& color = FColor::Red);
+	void DrawDebugCube(const FVector2D& position, const FVector2D& extents, FQuat& rotation, const FColor& color = FColor::Green);
 
 protected:
 	FTickerDelegate OnTickDelegate;

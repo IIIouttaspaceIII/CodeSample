@@ -27,6 +27,16 @@ inline FVector2D GetWorldSpacePositionToCarSpace(const FVector2D& position, cons
 	return WheelSpaceDirectionToWorldSpace(position - positionOffset.parent.get<Position>().value, rotation.value, 0) + positionOffset.value;
 }
 
+inline FVector2D GetCarSpacePositionToWorldSpace(const FVector2D& position, const Rotation& rotation, const FVector2D& positionOffset) {
+	// Calculate the wheel's position in world space
+	return WheelSpaceDirectionToWorldSpace(positionOffset, rotation.value, 0) + position;
+}
+
+inline FVector2D GetCarSpacePositionToWorldSpace(const FVector2D& position, const Rotation& rotation, const PositionOffset& positionOffset) {
+	// Calculate the wheel's position in world space
+	return GetCarSpacePositionToWorldSpace(position, rotation, positionOffset.parent.get<Position>().value);
+}
+
 inline static void UpdateAllMotorTorques(flecs::iter& it, size_t, MotorTorque& motorTorque, const MotorResistances& motorResistances, const MotorRedline& redline, const GearVelocity& gearVelocity, const ThrottleInput& throttleInput, const MotorCurve& motorCurve) {
 	float resistance = GetResistanceAtAngularVelocity(motorResistances, redline, throttleInput.amount, gearVelocity.RadiansPerSecond);
 	motorTorque.value = motorCurve.TorqueCurve ? (motorCurve.TorqueCurve->GetFloatValue(gearVelocity.RadiansPerSecond) * throttleInput.amount + resistance) : 0.f;
@@ -128,6 +138,13 @@ inline static void ApplyForceAtPoint(const float deltaTime, const FVector2D& for
 	positionOffset.parent.get_mut<VelocityDelta>().rotationDelta += deltaTime * FVector2D::CrossProduct(relativePosition, forceWheelSpace) / positionOffset.parent.get<RotationalInertia>().value; // Apply torque to the car's rotational velocity
 }
 
+inline static void ApplyImpulseAtPoint(const FVector2D& forceWorldSpace, const FVector2D& relativePosition, const Rotation& rotation, Velocity& velocity, RotationalVelocity& rotationalVelocity, const Mass& mass, const RotationalInertia& rotationalInertia) {
+	velocity.value += forceWorldSpace / mass.value; // Apply force to the car's velocity
+	//Convert world space force to wheel space
+	const auto forceWheelSpace = WorldSpaceDirectionToWheelSpace(forceWorldSpace, rotation.value, 0);
+	rotationalVelocity.value += FVector2D::CrossProduct(relativePosition, forceWheelSpace) / rotationalInertia.value; // Apply torque to the car's rotational velocity
+}
+
 inline void SolveFrictionalForces(flecs::iter& it, size_t, const WheelContactVelocity& velocityAtPoint, const PositionOffset& positionOffset, const WheelRadius& wheelRadius, GearVelocity& gearVelocity, const GearInverseMomentum& gearInverseMomentum, const WheelAngle& wheelAngle) {
 	//We check forwards velocity compared to the wheel's velocity
 	const auto difference = FVector2D{ velocityAtPoint.Forwards - (gearVelocity.RadiansPerSecond * wheelRadius.value), velocityAtPoint.Right };
@@ -155,4 +172,61 @@ inline void ApplyVelocityDeltas(flecs::iter& it, size_t, VelocityDelta& velocity
 	rotationalVelocity.value += velocityDelta.rotationDelta;
 	velocityDelta.value = FVector2D::ZeroVector; // Reset the delta after applying
 	velocityDelta.rotationDelta = 0.f; // Reset the rotation delta after applying
+}
+
+struct CollisionInfo {
+	int corner;
+	double penetration;
+};
+
+
+inline static void AddBoundsCollisions(
+	flecs::iter& it, size_t,
+	Position& position,
+	Velocity& velocity,
+	Rotation& rotation,
+	RotationalVelocity& rotationalVelocity,
+	const BoxExtents& boxExtents,
+	const RotationalInertia& rotationalInertia,
+	const Mass& mass) {
+	FVector2D halfExtents(boxExtents.width / 2, boxExtents.height / 2);
+	FVector2D corners[4] = {
+		{-halfExtents.X, -halfExtents.Y},
+		{ halfExtents.X, -halfExtents.Y},
+		{ halfExtents.X,  halfExtents.Y},
+		{-halfExtents.X,  halfExtents.Y}
+	};
+	const auto restitution = 0.5f; // Coefficient of restitution for collision response
+	FVector2D planes[4] = {
+	{-100, -100},
+	{ 100, 100},
+	{ -100,  -100},
+	{100,  100}
+	};
+	FVector2D planeNormals[4] = {
+		{0, 1},
+		{ 0, -1},
+		{ 1,  0},
+		{-1,  0}
+	};
+	for (int i = 0; i < 4; i++) {
+		const auto planePoint = planes[i]; // The point in world space where the box is located
+		const auto planeNormal = planeNormals[i]; // Normal of the collision plane, assuming the box is axis-aligned
+		for (const FVector2D& localCorner : corners) {
+			FVector2D worldCorner = GetCarSpacePositionToWorldSpace(position.value, rotation, localCorner);
+			float distance = (worldCorner - planePoint).Dot(planeNormal);
+			if (distance < 0.0f) {
+				
+				// Collision detected
+				FVector2D r = worldCorner - position.value;
+				FVector2D v_contact = velocity.value + rotationalVelocity.value * localCorner.GetRotated(90);
+				float v_rel = -v_contact.Dot(planeNormal);
+
+				// Positional correction (simple version)
+				float penetration = -distance;
+				FVector2D correction = planeNormal * penetration;
+				position.value += correction;
+			}
+		}
+	}
 }

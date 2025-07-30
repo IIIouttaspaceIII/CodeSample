@@ -4,10 +4,6 @@
 #include "FlecsSystems.h"
 #include "FlecsStructs.h"
 
-struct SubsystemReference {
-	UFlecsSubsystem* subsystem;
-};
-
 void UFlecsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	OnTickDelegate = FTickerDelegate::CreateUObject(this, &UFlecsSubsystem::Tick);
@@ -46,6 +42,15 @@ void UFlecsSubsystem::InitFlecs()
 		.each(SolveFrictionalForces);
 	ecs->system<VelocityDelta, Velocity, RotationalVelocity>("ApplyVelocityDeltas")
 		.each(ApplyVelocityDeltas);
+
+	ecs->system<Position,
+		Velocity,
+		Rotation,
+		RotationalVelocity,
+		const BoxExtents,
+		const RotationalInertia,
+		const Mass>("AddBoundsCollisions")
+		.each(AddBoundsCollisions);
 	ecs->system<Position, const Velocity>("IntegratePosition")
 		.each(IntegratePosition);
 	ecs->system<Rotation, const RotationalVelocity>("IntegrateRotation")
@@ -89,7 +94,9 @@ void UFlecsSubsystem::DrawDebugVector(const FVector2D& start, const FVector2D& D
 	const FVector start3D = FVector(start.X, start.Y, defaultRenderHeight); // Assuming a fixed Z value for debug drawing
 	DrawDebugLine(GetWorld(), start3D, start3D + FVector(Direction.X, Direction.Y, 0), color, false, -1.f, 0, 100.f);
 }
-
+void UFlecsSubsystem::DrawDebugCube(const FVector2D& position, const FVector2D& extents, FQuat& rotation, const FColor& color) {
+	DrawDebugSolidBox(GetWorld(), FVector(position.X, position.Y, 100), FVector(extents.X, extents.Y, 100), rotation, color, false, -1.f);
+}
 
 FFlecsEntityHandle UFlecsSubsystem::MakeCarBody() {
 	auto ecs = GetEcsWorld();
@@ -102,7 +109,7 @@ FFlecsEntityHandle UFlecsSubsystem::MakeCarBody() {
 		.set<VelocityDelta>({ FVector2D{0.f, 0.f}, 0 }) // Initial velocity delta
 		.set<Mass>({ 1400.f }) // Default mass
 		.set<RotationalInertia>({ 100.f }) // Default rotational inertia
-		.set<BoxExtents>({ 1.f, 0.5f }) // Default box extents
+		.set<BoxExtents>({ 2.f, 1.f }) // Default box extents
 	};
 }
 void UFlecsSubsystem::AttachWheelToCar(FFlecsEntityHandle car, FFlecsEntityHandle wheel, FVector2D offset) {
